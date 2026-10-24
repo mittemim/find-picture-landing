@@ -441,6 +441,11 @@ button:hover {
   background:#38472f
 }
 
+button:disabled {
+  opacity: .65;
+  cursor: wait;
+}
+
 button span {
   font-size:19px
 }
