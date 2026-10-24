@@ -4,19 +4,26 @@ import { DatabaseSync } from "node:sqlite";
 
 const databasePath = resolve(process.env.SQLITE_PATH || "data/requests.sqlite");
 
+function printRecords(records) {
+  console.log("Контактное лицо | телефон | сумма | дата и время добавления");
+  if (records.length === 0) console.log("Записей пока нет.");
+  for (const record of records) {
+    const addedAt = new Date(record.created_at).toLocaleString("ru-RU", { timeZone: "Europe/Moscow" });
+    console.log(`${record.contact_person} | ${record.phone} | ${record.reward} | ${addedAt}`);
+  }
+}
+
 try {
   if (!existsSync(databasePath)) {
-    console.log("[]");
+    printRecords([]);
   } else {
     const database = new DatabaseSync(databasePath, { readOnly: true });
     try {
       const records = database.prepare(`
-        SELECT contact_person AS "Контактное лицо",
-               phone AS "Телефон для связи",
-               reward AS "Вознаграждение за наводку"
+        SELECT contact_person, phone, reward, created_at
         FROM requests ORDER BY id
       `).all();
-      console.log(JSON.stringify(records, null, 2));
+      printRecords(records);
     } finally {
       database.close();
     }

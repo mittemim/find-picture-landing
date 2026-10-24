@@ -145,10 +145,13 @@ test("API saves only valid requests, timestamps them and preserves them after re
     cwd: process.cwd(), env: { ...process.env, SQLITE_PATH: databasePath }, encoding: "utf8", windowsHide: true,
   });
   assert.equal(viewed.status, 0, viewed.stderr);
-  assert.deepEqual(JSON.parse(viewed.stdout), [
-    { "Контактное лицо": valid.contactPerson, "Телефон для связи": valid.phone, "Вознаграждение за наводку": 15000 },
-    { "Контактное лицо": valid.contactPerson, "Телефон для связи": "89991234567", "Вознаграждение за наводку": 0 },
-  ], "Viewer must return all rows and only the three form fields");
+  const expectedRows = rows().map((row) => [
+    row.contact_person, row.phone, row.reward,
+    new Date(row.created_at).toLocaleString("ru-RU", { timeZone: "Europe/Moscow" }),
+  ].join(" | "));
+  assert.deepEqual(viewed.stdout.trim().split(/\r?\n/), [
+    "Контактное лицо | телефон | сумма | дата и время добавления", ...expectedRows,
+  ], "Viewer must return all rows with four columns, without IDs or database structure");
   assert.equal(rows().length, 2, "Viewer must not change the database");
 
   const backup = databasePath + ".backup";
@@ -172,7 +175,7 @@ test("viewer handles missing and empty databases without creating records", () =
   });
   const missing = view(missingPath);
   assert.equal(missing.status, 0, missing.stderr);
-  assert.deepEqual(JSON.parse(missing.stdout), []);
+  assert.equal(missing.stdout.trim(), "Контактное лицо | телефон | сумма | дата и время добавления\nЗаписей пока нет.");
   assert.equal(existsSync(missingPath), false, "Viewer must not create a missing database");
 
   const emptyPath = join(directory, "empty.sqlite");
@@ -184,7 +187,17 @@ test("viewer handles missing and empty databases without creating records", () =
   }
   const empty = view(emptyPath);
   assert.equal(empty.status, 0, empty.stderr);
-  assert.deepEqual(JSON.parse(empty.stdout), []);
+  assert.equal(empty.stdout, missing.stdout);
+
+  const fixtureDb = new DatabaseSync(emptyPath);
+  try {
+    fixtureDb.prepare("INSERT INTO requests VALUES (?, ?, ?, ?, ?)")
+      .run(999, "Анна", "79991234567", 15000, "2026-10-25T09:15:30.123Z");
+  } finally {
+    fixtureDb.close();
+  }
+  assert.equal(view(emptyPath).stdout.trim(),
+    "Контактное лицо | телефон | сумма | дата и время добавления\nАнна | 79991234567 | 15000 | 25.10.2026, 12:15:30");
 
   const unreadable = view(directory);
   assert.equal(unreadable.status, 1);
