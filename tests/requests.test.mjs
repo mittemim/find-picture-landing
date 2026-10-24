@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-import { mkdtempSync, mkdirSync, renameSync, rmdirSync, rmSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { existsSync, mkdtempSync, mkdirSync, renameSync, rmdirSync, rmSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
@@ -99,6 +99,9 @@ after(async () => {
 });
 
 test("API saves only valid requests, timestamps them and preserves them after restart", async () => {
+  // These are direct HTTP requests to a separate Next.js process, without a browser.
+  assert.equal((await post({ ...valid, contactPerson: "А" })).status, 400);
+  assert.equal(existsSync(databasePath), false, "Invalid first request must not create a database");
   const startedAt = Date.now();
   const response = await post(valid);
   assert.equal(response.status, 201);
@@ -116,9 +119,17 @@ test("API saves only valid requests, timestamps them and preserves them after re
     const response = await post({ ...valid, [field]: value });
     assert.equal(response.status, 400, `${field}: ${value}`);
     assert.ok((await response.json()).errors[field]);
+    assert.deepEqual(rows(), saved, "Each invalid request must leave the database unchanged");
   }
-  for (const body of [null, [], {}, { ...valid, created_at: "2000-01-01" }]) {
+  const unexpectedFields = ["id", "created_at", "email", "message", "isAdmin"];
+  const missingFields = Object.keys(valid).map((field) => {
+    const body = { ...valid };
+    delete body[field];
+    return body;
+  });
+  for (const body of [null, [], {}, ...missingFields, ...unexpectedFields.map((field) => ({ ...valid, [field]: "unexpected" }))]) {
     assert.equal((await post(body)).status, 400);
+    assert.deepEqual(rows(), saved, "Extra or missing fields must not insert or modify rows");
   }
   assert.equal((await fetch(`${baseUrl}/api/requests`, { method: "POST", body: "{broken" })).status, 400);
   assert.equal((await fetch(`${baseUrl}/api/requests`)).status, 405);
@@ -129,6 +140,19 @@ test("API saves only valid requests, timestamps them and preserves them after re
   assert.deepEqual(rows(), saved);
   assert.equal((await post({ ...valid, phone: "89991234567", reward: "0" })).status, 201);
   assert.equal(rows()[1].reward, 0);
+
+  const viewed = spawnSync(process.execPath, ["scripts/view-requests.mjs"], {
+    cwd: process.cwd(), env: { ...process.env, SQLITE_PATH: databasePath }, encoding: "utf8", windowsHide: true,
+  });
+  assert.equal(viewed.status, 0, viewed.stderr);
+  const expectedRows = rows().map((row) => [
+    row.contact_person, row.phone, row.reward,
+    new Date(row.created_at).toLocaleString("ru-RU", { timeZone: "Europe/Moscow" }),
+  ].join(" | "));
+  assert.deepEqual(viewed.stdout.trim().split(/\r?\n/), [
+    "Контактное лицо | телефон | сумма | дата и время добавления", ...expectedRows,
+  ], "Viewer must return all rows with four columns, without IDs or database structure");
+  assert.equal(rows().length, 2, "Viewer must not change the database");
 
   const backup = databasePath + ".backup";
   renameSync(databasePath, backup);
@@ -142,4 +166,41 @@ test("API saves only valid requests, timestamps them and preserves them after re
     renameSync(backup, databasePath);
   }
   assert.equal(rows().length, 2);
+});
+
+test("viewer handles missing and empty databases without creating records", () => {
+  const missingPath = join(directory, "missing.sqlite");
+  const view = (file) => spawnSync(process.execPath, ["scripts/view-requests.mjs"], {
+    cwd: process.cwd(), env: { ...process.env, SQLITE_PATH: file }, encoding: "utf8", windowsHide: true,
+  });
+  const missing = view(missingPath);
+  assert.equal(missing.status, 0, missing.stderr);
+  assert.equal(missing.stdout.trim(), "Контактное лицо | телефон | сумма | дата и время добавления\nЗаписей пока нет.");
+  assert.equal(existsSync(missingPath), false, "Viewer must not create a missing database");
+
+  const emptyPath = join(directory, "empty.sqlite");
+  const emptyDb = new DatabaseSync(emptyPath);
+  try {
+    emptyDb.exec("CREATE TABLE requests (id INTEGER PRIMARY KEY, contact_person TEXT, phone TEXT, reward REAL, created_at TEXT)");
+  } finally {
+    emptyDb.close();
+  }
+  const empty = view(emptyPath);
+  assert.equal(empty.status, 0, empty.stderr);
+  assert.equal(empty.stdout, missing.stdout);
+
+  const fixtureDb = new DatabaseSync(emptyPath);
+  try {
+    fixtureDb.prepare("INSERT INTO requests VALUES (?, ?, ?, ?, ?)")
+      .run(999, "Анна", "79991234567", 15000, "2026-10-25T09:15:30.123Z");
+  } finally {
+    fixtureDb.close();
+  }
+  assert.equal(view(emptyPath).stdout.trim(),
+    "Контактное лицо | телефон | сумма | дата и время добавления\nАнна | 79991234567 | 15000 | 25.10.2026, 12:15:30");
+
+  const unreadable = view(directory);
+  assert.equal(unreadable.status, 1);
+  assert.equal(unreadable.stdout, "");
+  assert.match(unreadable.stderr, /Не удалось прочитать обращения/);
 });
