@@ -6,7 +6,11 @@ export default function Home() {
       <header className="site-header">
         <a className="brand" href="#case" aria-label="Закрытая галерея — к витрине дела"><span className="brand-mark" aria-hidden="true">г.</span><span>ЗАКРЫТАЯ<br />ГАЛЕРЕЯ</span></a>
         <span className="header-note">Искусство сохраняет следы.</span>
-        <a className="header-link" href="#request">Связаться с галереей <span aria-hidden="true">↗</span></a>
+        <nav className="header-nav" aria-label="Разделы страницы">
+          <a className="header-link" href="#case">Витрина дела</a>
+          <a className="header-link" href="#reasons">Основания для контакта</a>
+          <a className="header-link" href="#request">Связаться с галереей <span aria-hidden="true">↗</span></a>
+        </nav>
       </header>
 
       <main>
@@ -24,7 +28,7 @@ export default function Home() {
             <span className="gallery-note">Фрагменты истории / открытая коллекция</span>
           </div>
 
-          <section className="reasons" aria-labelledby="reasons-title">
+          <section id="reasons" className="reasons" aria-labelledby="reasons-title">
             <h2 id="reasons-title">Основания для контакта</h2>
             <p className="reasons-intro">Необязательно знать всё. Достаточно одной зацепки.</p>
             <ol>
